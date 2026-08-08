@@ -1,0 +1,1011 @@
+'use client';
+
+import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/context/AuthContext';
+import { useCart } from '@/context/CartContext';
+import Navbar from '@/components/Navbar';
+import PremiumAlert from '@/components/PremiumAlert';
+import CountdownTimer from '@/components/CountdownTimer';
+import DIQModal from '@/components/DIQModal';
+import { useSearch } from '@/hooks/useSearch';
+import { IconSearch } from '@/components/Icons';
+
+type DashboardProduct = {
+    id?: string | number;
+    product_name?: string;
+    name?: string;
+    brand?: string;
+    price_inr?: number | string;
+    image_url?: string;
+    image?: string;
+    retailer_name?: string;
+    last_updated?: string;
+    is_offline_store?: boolean;
+};
+
+type PromoSlide = {
+    image_url: string;
+    name: string;
+    query: string;
+};
+
+const PROMO_SLIDES: PromoSlide[] = [
+    {
+        image_url: 'https://m.media-amazon.com/images/I/31qGR9hxtsL._SX300_SY300_QL70_FMwebp_.jpg',
+        name: 'Premium Earbuds',
+        query: 'premium earbuds'
+    },
+    {
+        image_url: 'https://rukminim1.flixcart.com/image/400/400/xif0q/headphone/s/k/s/best-performing-with-low-latency-wired-cbt-cabtronics-original-imahjhcfykzejntc.jpeg?q=70',
+        name: 'Wired Headphones',
+        query: 'wired headphones'
+    },
+    {
+        image_url: 'https://images.samsung.com/is/image/samsung/p6pim/in/sm-r400nzaains/gallery/in-galaxy-buds-fe-480225-sm-r400nzaains-thumb-538531516?$Q90_330_330_F_PNG$',
+        name: 'Samsung Galaxy Buds FE',
+        query: 'samsung galaxy buds'
+    },
+    {
+        image_url: 'https://m.media-amazon.com/images/I/318-p4IpH6L._SY300_SX300_QL70_FMwebp_.jpg',
+        name: 'TWS Earbuds',
+        query: 'tws earbuds'
+    }
+];
+
+type CategoryMeta = {
+    name: string;
+    price: string;
+    image: string | null;
+    q: string;
+};
+
+type SearchHistoryItem = string | {
+    search_query?: string;
+    query?: string;
+};
+
+type DashboardRouter = {
+    push: (href: string) => void;
+};
+
+const CategoryItem = ({ cat, router }: { cat: CategoryMeta, router: DashboardRouter }) => {
+    const [bloomProducts, setBloomProducts] = useState<DashboardProduct[]>([]);
+    
+    useEffect(() => {
+        const fetchBloom = async () => {
+            try {
+                const res = await fetch(`/api/products/search?q=${encodeURIComponent(cat.q)}&limit=3`);
+                const data = await res.json();
+                setBloomProducts(productsFrom(data));
+            } catch (err) {
+                console.error("Failed to fetch bloom:", err);
+            }
+        };
+        fetchBloom();
+    }, [cat.q]);
+
+    return (
+        <div className="category-item-wrapper">
+            {bloomProducts.map((p, idx) => (
+                <div key={p.id} className="bloom-mini-card" onClick={(e) => {
+                    e.stopPropagation();
+                    router.push(`/product/${p.id}?retailer=${encodeURIComponent(p.retailer_name || '')}`);
+                }}>
+                    <img src={p.image_url} alt="" style={{ width: '100%', height: '50px', objectFit: 'contain' }} />
+                    <div style={{ padding: '4px', textAlign: 'center', width: '100%' }}>
+                        <p style={{ fontSize: '9px', fontWeight: 600, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {p.product_name}
+                        </p>
+                        <p style={{ fontSize: '10px', color: '#10b981', fontWeight: 800, marginTop: '2px' }}>₹{p.price_inr}</p>
+                    </div>
+                </div>
+            ))}
+            <div className="category-circle" onClick={() => router.push(`/results?q=${cat.q}&chargeCredits=true`)} style={{ 
+                borderRadius: '50%', background: 'var(--bg-secondary)', 
+                border: '3px solid var(--border-focus)', display: 'flex', flexDirection: 'column', 
+                alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden',
+                position: 'relative', boxShadow: '0 8px 25px rgba(16,185,129,0.15)', transition: 'all 0.4s cubic-bezier(0.25, 1, 0.5, 1)'
+            }}>
+                {cat.image && <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0.15, background: `url(${cat.image}) center/cover no-repeat` }} />}
+                <div style={{ zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    {cat.image ? (
+                         <img src={cat.image} alt={cat.name} style={{ width: '80px', height: '80px', objectFit: 'contain', marginBottom: '12px' }} />
+                    ) : (
+                        <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.1)', marginBottom: '12px' }} />
+                    )}
+                    <h3 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', zIndex: 2, marginBottom: '4px' }}>{cat.name}</h3>
+                    <p style={{ color: 'var(--accent)', fontWeight: 700, zIndex: 2, fontSize: '14px', background: 'rgba(16, 185, 129, 0.08)', padding: '2px 8px', borderRadius: '12px' }}>From ₹{cat.price}</p>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const productsFrom = (data: { products?: unknown } | null | undefined): DashboardProduct[] =>
+    Array.isArray(data?.products) ? data.products as DashboardProduct[] : [];
+
+// Persistent cache outside the component to allow instant loads when returning to the dashboard
+let dashboardCache: any = null;
+
+const searchesFrom = (data: { searches?: unknown } | null | undefined): string[] =>
+    Array.isArray(data?.searches) ? data.searches.filter((search): search is string => typeof search === 'string') : [];
+
+export default function DashboardPage() {
+    const router = useRouter();
+    const { currentUser, loading, authenticatedFetch } = useAuth();
+    const { cart, bag, addToCart, addToBag } = useCart();
+    const { search: clientSearch, indexLoaded } = useSearch(); // client-side instant search
+    
+    const [searchTerm, setSearchTerm] = useState('');
+    const [showDIQ, setShowDIQ] = useState(false);
+    const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>(dashboardCache?.searchHistory || []);
+    const [frequentSearches, setFrequentSearches] = useState<string[]>(dashboardCache?.frequentSearches || ['Earphones', 'Earpods', 'Headphones', 'Neckbands', 'Smartwatch']);
+    const [initialFrequent, setInitialFrequent] = useState<string[]>(dashboardCache?.frequentSearches || ['Earphones', 'Earpods', 'Headphones', 'Neckbands', 'Smartwatch']);
+    const [isHistoryVisible, setIsHistoryVisible] = useState(false);
+    const [cooldownTime, setCooldownTime] = useState(0);
+    const RECENT_SEARCHES_KEY = 'dropiq_recent_searches';
+
+    useEffect(() => {
+        if (cooldownTime <= 0) return;
+        const timer = setInterval(() => setCooldownTime(prev => Math.max(0, prev - 1)), 1000);
+        return () => clearInterval(timer);
+    }, [cooldownTime]);
+
+    const loadRecentSearches = (): string[] => {
+        try {
+            const raw = localStorage.getItem(RECENT_SEARCHES_KEY);
+            if (!raw) return [];
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    };
+
+    const pushRecentSearch = (query: string) => {
+        const clean = query.trim();
+        if (!clean) return;
+        const existing = loadRecentSearches();
+        const next = [clean, ...existing.filter((q: string) => q.toLowerCase() !== clean.toLowerCase())].slice(0, 12);
+        localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(next));
+        setSearchHistory(next);
+    };
+
+    
+    const [lootDeals, setLootDeals] = useState<DashboardProduct[]>(dashboardCache?.lootDeals || []);
+    const [festiveCollection, setFestiveCollection] = useState<DashboardProduct[]>(dashboardCache?.festiveCollection || []);
+    const [grabOrGone, setGrabOrGone] = useState<DashboardProduct[]>([]);
+    const [suggestedForYou, setSuggestedForYou] = useState<DashboardProduct[]>(dashboardCache?.suggestedForYou || []);
+    const [bestGadgets, setBestGadgets] = useState<DashboardProduct[]>([]);
+    const [favourites, setFavourites] = useState<DashboardProduct[]>([]);
+    
+    const [categoryMeta, setCategoryMeta] = useState<CategoryMeta[]>([
+        { name: 'Earpods', price: '299', image: 'https://m.media-amazon.com/images/I/31HM2REQEnL._SY300_SX300_QL70_FMwebp_.jpg', q: 'earpods' },
+        { name: 'Earphones', price: '199', image: 'https://m.media-amazon.com/images/I/31immGsw0TL._SY300_SX300_QL70_FMwebp_.jpg', q: 'earphone' },
+        { name: 'Headphones', price: '499', image: 'https://m.media-amazon.com/images/I/31NwIPwIdlL._SY300_SX300_QL70_FMwebp_.jpg', q: 'headphone' },
+        { name: 'Neckbands', price: '399', image: 'https://m.media-amazon.com/images/I/31-gSmPV0kL._SY300_SX300_QL70_FMwebp_.jpg', q: 'neckband' }
+    ]);
+
+    const slideshowImages = PROMO_SLIDES;
+    const [slideshowIndex, setSlideshowIndex] = useState(0);
+    const [alertConfig, setAlertConfig] = useState<{ isOpen: boolean; title: string; message: string; onConfirm?: () => void; type?: 'danger' | 'warning' | 'info' | 'success'; confirmText?: string }>({
+        isOpen: false,
+        title: '',
+        message: '',
+    });
+    const [isPageReady, setIsPageReady] = useState(!!dashboardCache);
+
+    useEffect(() => {
+        if (!loading && !currentUser) router.replace('/login');
+        
+        // Restore scroll position when user comes back
+        const savedScroll = sessionStorage.getItem('dashboardScroll');
+        if (isPageReady && savedScroll) {
+            setTimeout(() => {
+                window.scrollTo({ top: parseInt(savedScroll), behavior: 'instant' });
+                sessionStorage.removeItem('dashboardScroll');
+            }, 50); // Small buffer to ensure DOM is painted
+        }
+    }, [loading, currentUser, router, isPageReady]);
+
+    // Save scroll position before navigating away
+    useEffect(() => {
+        const handleScroll = () => {
+            if (window.scrollY > 0) {
+                sessionStorage.setItem('dashboardScroll', window.scrollY.toString());
+            }
+        };
+        window.addEventListener('scroll', handleScroll);
+        return () => window.removeEventListener('scroll', handleScroll);
+    }, []);
+
+    useEffect(() => {
+        const fetchInitialData = async () => {
+            // 1. Instant load from Cache
+            if (dashboardCache) {
+                setLootDeals(dashboardCache.lootDeals || []);
+                setFestiveCollection(dashboardCache.festiveCollection || []);
+                setSuggestedForYou(dashboardCache.suggestedForYou || []);
+                setFrequentSearches(dashboardCache.frequentSearches || []);
+                setInitialFrequent(dashboardCache.frequentSearches || []);
+                setSearchHistory(dashboardCache.searchHistory || []);
+                setIsPageReady(true);
+                if (Date.now() - dashboardCache.timestamp < 600000) return;
+            }
+
+            try {
+                // 2. Fetch Loot Deals (Fastest/Primary section)
+                const lootRes = await fetch('/api/products/search?limit=8&sortBy=price_desc');
+                const lootData = await lootRes.json();
+                const loot = productsFrom(lootData);
+                if (lootData.success) {
+                    setLootDeals(loot);
+                    // setSlideshowImages removed for static slideshow
+                }
+                
+                // 3. Fetch Festive Collection
+                const festiveRes = await fetch('/api/products/search?limit=12&sortBy=rating');
+                const festiveData = await festiveRes.json();
+                const festive = productsFrom(festiveData);
+                if (festiveData.success) {
+                    setFestiveCollection(festive);
+                    setSuggestedForYou([...festive].reverse().slice(0, 8));
+                    // Progressive Slideshow Update (Part 2) - removed for static
+                }
+                
+                const freqRes = await fetch('/api/products/frequent-searches');
+                const freqData = await freqRes.json();
+                const trending = searchesFrom(freqData);
+
+                let historyItems: string[] = [];
+                if (currentUser) {
+                    const hRes = await authenticatedFetch('/api/products/search-history?limit=10');
+                    const hData = await hRes.json();
+                    if (hData.success) {
+                        historyItems = hData.history.map((h: any) => typeof h === 'string' ? h : (h.search_query || h.query));
+                    }
+                }
+
+                if (freqData.success) {
+                    setFrequentSearches(trending);
+                    setInitialFrequent(trending);
+                }
+                setSearchHistory(historyItems);
+
+                // 4. Store in Cache
+                dashboardCache = {
+                    lootDeals: loot,
+                    festiveCollection: festive,
+                    suggestedForYou: [...festive].reverse().slice(0, 8),
+                    frequentSearches: trending,
+                    searchHistory: historyItems,
+                    slideshowImages: [...loot, ...festive].filter(p => p.image_url).slice(0, 5),
+                    timestamp: Date.now()
+                };
+
+                setIsPageReady(true);
+                window.dispatchEvent(new CustomEvent('dashboard-ready'));
+            } catch (error) {
+                console.error("Dashboard minimal load failed:", error);
+                setIsPageReady(true);
+                window.dispatchEvent(new CustomEvent('dashboard-ready'));
+            }
+        };
+        if (currentUser) fetchInitialData();
+    }, [currentUser, authenticatedFetch]);
+
+    // Handle dynamic search suggestions as user types
+    // Priority: client-side instant search → server suggestions fallback
+    useEffect(() => {
+        if (!searchTerm.trim()) {
+            setFrequentSearches(initialFrequent);
+            return;
+        }
+
+        const timer = setTimeout(async () => {
+            // ── Client-side search (instant, no network) ─────────────────────
+            if (indexLoaded) {
+                const clientResults = clientSearch(searchTerm);
+                if (clientResults.length > 0) {
+                    // Extract short keyword suggestions: brand + first meaningful word(s) of model
+                    const toKeyword = (name: string): string => {
+                        // Strip color/variant info in parentheses, then take first 4 words max
+                        const clean = name.replace(/\(.*?\)/g, '').trim();
+                        const words = clean.split(/\s+/).filter(Boolean);
+                        return words.slice(0, 4).join(' ');
+                    };
+                    const keywords = [...new Set(clientResults.map((p) => toKeyword(p.product_name)))].slice(0, 8);
+                    setFrequentSearches(keywords);
+                    setIsHistoryVisible(true);
+                    return; // skip server call entirely
+                }
+            }
+
+            // ── Server fallback (when client has 0 results or index not loaded yet) ─
+            try {
+                const res = await fetch(`/api/products/search-suggestions?q=${encodeURIComponent(searchTerm)}&limit=5`);
+                const data = await res.json();
+                if (data.success && data.suggestions.length > 0) {
+                    setFrequentSearches(data.suggestions);
+                    setIsHistoryVisible(true);
+                } else {
+                    setFrequentSearches([]);
+                    if (searchTerm.trim().length >= 3) {
+                        setIsHistoryVisible(false);
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to fetch suggestions:", err);
+            }
+        }, 250); // 250ms debounce
+
+        return () => clearTimeout(timer);
+    }, [searchTerm, initialFrequent, indexLoaded, clientSearch]);
+
+    const handleClearHistory = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        setAlertConfig({
+            isOpen: true,
+            title: 'Clear History?',
+            message: 'Are you sure you want to clear your search history? This cannot be undone.',
+            type: 'danger',
+            confirmText: 'Clear All',
+            onConfirm: async () => {
+                try {
+                    const res = await authenticatedFetch('/api/products/search-history', {
+                        method: 'DELETE'
+                    });
+                    if (res.ok) {
+                        setSearchHistory([]);
+                        localStorage.removeItem(RECENT_SEARCHES_KEY);
+                    }
+                } catch (err) {
+                    console.error('Failed to clear history:', err);
+                    setSearchHistory([]);
+                    localStorage.removeItem(RECENT_SEARCHES_KEY);
+                }
+            }
+        });
+    };
+
+    useEffect(() => {
+        if (slideshowImages.length === 0) return;
+        const interval = setInterval(() => {
+            setSlideshowIndex(prev => (prev + 1) % slideshowImages.length);
+        }, 5000);
+        return () => clearInterval(interval);
+    }, [slideshowImages]);
+
+    useEffect(() => {
+        const highlightCenter = (container: Element) => {
+            const cards = container.querySelectorAll('.product-card');
+            if (cards.length === 0) return;
+            const wrapper = container.parentElement;
+            const containerRect = container.getBoundingClientRect();
+            
+            // Default center is 50%, but for specific sections we allow shifting left/right
+            let centerRatio = 0.5;
+            if (wrapper?.classList.contains('offset-left')) centerRatio = 0.4;
+            if (wrapper?.classList.contains('offset-right')) centerRatio = 0.6;
+            
+            const targetPoint = containerRect.left + (containerRect.width * centerRatio);
+            
+            let closestIdx = 0;
+            let closestDist = Infinity;
+            cards.forEach((card, i) => {
+                const cardRect = card.getBoundingClientRect();
+                const cardCenter = cardRect.left + cardRect.width / 2;
+                const dist = Math.abs(cardCenter - targetPoint);
+                if (dist < closestDist) { closestDist = dist; closestIdx = i; }
+            });
+            cards.forEach((card, i) => {
+                if (i === closestIdx) card.classList.add('active-highlight');
+                else card.classList.remove('active-highlight');
+            });
+        };
+
+        const initTimer = setTimeout(() => {
+            document.querySelectorAll('.horizontal-scroll-container').forEach(highlightCenter);
+        }, 1200);
+
+        // Standard auto-scroller for stepped rows
+        const interval = setInterval(() => {
+            document.querySelectorAll('.horizontal-scroll-container:not(.belt-scroll):not(.manual-scroll)').forEach(container => {
+                if (container.children.length === 0) return;
+                
+                const firstChild = container.firstElementChild as HTMLElement;
+                if (!firstChild) return;
+
+                const gap = parseInt(window.getComputedStyle(container).gap) || 0;
+                const shiftWidth = firstChild.offsetWidth + gap;
+                
+                firstChild.style.transition = 'margin-left 0.5s cubic-bezier(0.4, 0, 0.2, 1)';
+                firstChild.style.marginLeft = `-${shiftWidth}px`;
+                
+                setTimeout(() => {
+                    firstChild.style.transition = 'none';
+                    firstChild.style.marginLeft = '0px';
+                    container.appendChild(firstChild);
+                    highlightCenter(container);
+                }, 550); 
+            });
+        }, 3000);
+
+        // Belt scroller for continuous smooth motion
+        let rafId: number;
+        const runBelt = () => {
+            document.querySelectorAll('.belt-scroll').forEach(container => {
+                const htmlContainer = container as HTMLElement;
+                htmlContainer.scrollLeft += 0.4; // Very slow speed (approx 1 min for full width)
+                
+                const firstChild = htmlContainer.firstElementChild as HTMLElement;
+                if (firstChild) {
+                    const gap = parseInt(window.getComputedStyle(htmlContainer).gap) || 0;
+                    const shiftPoint = firstChild.offsetWidth + gap;
+                    
+                    if (htmlContainer.scrollLeft >= shiftPoint) {
+                        htmlContainer.scrollLeft -= shiftPoint;
+                        htmlContainer.appendChild(firstChild);
+                    }
+                }
+                highlightCenter(htmlContainer);
+            });
+            rafId = requestAnimationFrame(runBelt);
+        };
+        rafId = requestAnimationFrame(runBelt);
+
+        return () => {
+            clearInterval(interval);
+            clearTimeout(initTimer);
+            cancelAnimationFrame(rafId);
+        };
+    }, [lootDeals, festiveCollection, grabOrGone, suggestedForYou, bestGadgets, favourites]); // Rebind after fetch and ready
+
+    const handleSearch = () => {
+        const q = searchTerm.trim();
+        if (!q) return;
+        pushRecentSearch(q);
+        sessionStorage.setItem('last_search_timestamp', Date.now().toString());
+        router.push(`/results?q=${encodeURIComponent(q)}`);
+    };
+
+    useEffect(() => {
+        const lastSearch = sessionStorage.getItem('last_search_timestamp');
+        if (lastSearch) {
+            const elapsed = Math.floor((Date.now() - parseInt(lastSearch)) / 1000);
+            if (elapsed < 60) {
+                setCooldownTime(60 - elapsed);
+            }
+        }
+    }, []);
+
+    const loadProduct = (id: string, retailer: string) => {
+        sessionStorage.setItem('dashboardScroll', window.scrollY.toString());
+        router.push(`/product/${id}?retailer=${encodeURIComponent(retailer)}`);
+    };
+
+    // Removed the early null return that causes white flash. 
+    // Instead, we handle the loading state inside the JSX with visibility.
+
+
+    const planType = currentUser?.planType === 'premium' ? 'max' : currentUser?.planType || 'free';
+    const maxCredits = planType === 'max' ? 75 : planType === 'pro' ? 50 : 20;
+    const currentCredits = currentUser?.credits ?? 0;
+    const usedCredits = Math.max(0, maxCredits - currentCredits);
+
+    // Get freshness label for product
+    const getFreshnessLabel = (lastUpdated: string | undefined): string => {
+        if (!lastUpdated) return 'Updated recently';
+        const updatedDate = new Date(lastUpdated);
+        const now = new Date();
+        const diffDays = Math.floor((now.getTime() - updatedDate.getTime()) / (1000 * 60 * 60 * 24));
+        if (diffDays < 20) return 'Updated a day ago';
+        else if (diffDays >= 20 && diffDays < 35) return 'Updated 4 days ago';
+        else return 'Updated 6 days ago';
+    };
+
+    const renderCard = (p: DashboardProduct, i: number, uniqueKey: string) => {
+        const isFestive = uniqueKey === 'festive';
+        const isLoot = uniqueKey === 'loot';
+        const isGrab = uniqueKey === 'grab';
+        const isFav = uniqueKey === 'fav';
+        const isSuggested = uniqueKey === 'suggested';
+        const isCart = uniqueKey === 'cart';
+        const freshnessLabel = getFreshnessLabel(p.last_updated);
+
+        const productName = p.product_name || 'Untitled product';
+        const displayTitle = (isFestive || isLoot || isGrab || isFav || isSuggested)
+            ? (productName.length > 25 ? productName.substring(0, 25) + '...' : productName)
+            : productName;
+        const statusLabel = p.is_offline_store ? 'Offline' : 'Online';
+
+        if (isFestive) {
+            const festivePrice = String(p.price_inr ?? '').replace(/\D/g, '');
+            return (
+                <div key={`${uniqueKey}-${i}`} className="product-card revolving-border-card dashboard-mobile-action-card" onClick={() => loadProduct(String(p.id || ''), p.retailer_name || '')} style={{ cursor: 'pointer', width: '100%' }}>
+                    <div className={`dashboard-card-status ${p.is_offline_store ? 'is-offline' : 'is-online'}`}>{statusLabel}</div>
+                    <div className="dashboard-card-store">{p.retailer_name || 'Store'}</div>
+
+                    <div className="dashboard-card-image-wrap">
+                        {p.image_url ? (
+                            <img src={p.image_url} alt={displayTitle} className="dashboard-card-image" />
+                        ) : (
+                            <div className="dashboard-card-no-image">No Image</div>
+                        )}
+                    </div>
+
+                    <div className="dashboard-card-info">
+                        <div className="product-brand dashboard-card-brand">{p.brand || 'DROP IQ'}</div>
+                        <div className="product-title dashboard-card-title">{displayTitle}</div>
+                        <div className="dashboard-card-freshness">
+                            <span></span>
+                            {freshnessLabel}
+                        </div>
+                        <div className="product-price dashboard-card-price">₹{festivePrice}</div>
+                        <div className="dashboard-card-actions">
+                            <button type="button" onClick={(e) => { e.stopPropagation(); addToCart(p); }}>Add to Cart</button>
+                            <button type="button" onClick={(e) => { e.stopPropagation(); addToBag(p); }}>Add to Bag</button>
+                            <button type="button" onClick={(e) => { e.stopPropagation(); loadProduct(String(p.id || ''), p.retailer_name || ''); }}>View Product</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Custom Layout for "Loot Deals" & "Suggested For You" (Slim Horizontal Rectangle)
+        if (isLoot || isSuggested) {
+            const cardWidth = isSuggested ? '100%' : '260px';
+            const cardClass = isSuggested ? "product-card" : "product-card floating-card";
+            return (
+                <div key={`${uniqueKey}-${i}`} className={cardClass} onClick={() => loadProduct(String(p.id || ''), p.retailer_name || '')} style={{ cursor: 'pointer', minWidth: cardWidth, maxWidth: cardWidth, padding: '16px', minHeight: 'unset', height: '120px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '16px', height: '100%' }}>
+                        {p.image_url ? (
+                            <img src={p.image_url} alt={displayTitle} style={{ width: '80px', height: '80px', objectFit: 'contain', flexShrink: 0 }} />
+                        ) : (
+                            <div style={{ width: '80px', height: '80px', background: 'rgba(16,185,129,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '12px', flexShrink: 0 }}>No Image</div>
+                        )}
+                        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+                            <div className="product-brand" style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{p.brand || 'DROP IQ'}</div>
+                            <div className="product-title" style={{ 
+                                fontSize: '14px', 
+                                fontWeight: 600, 
+                                marginTop: '4px', 
+                                display: '-webkit-box',
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical',
+                                overflow: 'hidden',
+                                lineHeight: '1.2',
+                                height: '2.4em'
+                            }}>
+                                {displayTitle}
+                            </div>
+                            <div style={{ fontSize: '9px', color: '#059669', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '3px', marginTop: '4px', padding: '1px 6px', background: 'rgba(16, 185, 129, 0.1)', borderRadius: '8px', width: 'fit-content' }}>
+                                <span style={{ width: '4px', height: '4px', background: '#10b981', borderRadius: '50%', display: 'inline-block' }}></span>
+                                {freshnessLabel}
+                            </div>
+                            <div className="product-price" style={{ fontSize: '18px', fontWeight: 800, color: '#059669', marginTop: '4px' }}>₹{p.price_inr}</div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const cardClass = isFestive ? "product-card revolving-border-card" :
+                        (isFav ? "product-card periodic-shine-card" : "product-card");
+        const widthStyle = (isFestive || isFav || isCart) ? { width: '100%' } : { minWidth: '200px', maxWidth: '200px' };
+
+        return (
+            <div key={`${uniqueKey}-${i}`} className={cardClass} onClick={() => loadProduct(String(p.id || ''), p.retailer_name || '')} style={{ cursor: 'pointer', ...widthStyle, border: isFav ? '4px double #10b981' : undefined, background: isFav ? 'transparent' : undefined, boxShadow: isFav ? 'none' : undefined }}>
+                <div style={(isFestive || isFav) ? { padding: '16px', display: 'flex', flexDirection: 'column', height: '100%', zIndex: 2 } : { display: 'flex', flexDirection: 'column', height: '100%' }}>
+                    {p.image_url ? (
+                        <img src={p.image_url} alt={displayTitle} style={{ width: '100%', height: isFestive ? '110px' : '100px', objectFit: 'contain', marginBottom: '12px' }} />
+                    ) : (
+                        <div style={{ width: '100%', height: isFestive ? '110px' : '100px', background: 'rgba(16,185,129,0.06)', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '12px' }}>No Image</div>
+                    )}
+                    <div className="product-brand" style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{p.brand || 'DROP IQ'}</div>
+                    <div className="product-title" style={{ 
+                        fontSize: isFestive ? '13px' : '14px', 
+                        fontWeight: 600, 
+                        marginTop: '4px', 
+                        flex: 1, 
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                        lineHeight: '1.2',
+                        height: '2.4em'
+                    }}>
+                        {displayTitle}
+                    </div>
+                    <div style={{ fontSize: '9px', color: '#059669', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '3px', marginTop: '4px', padding: '1px 6px', background: 'rgba(16, 185, 129, 0.1)', borderRadius: '8px', width: 'fit-content' }}>
+                        <span style={{ width: '4px', height: '4px', background: '#10b981', borderRadius: '50%', display: 'inline-block' }}></span>
+                        {freshnessLabel}
+                    </div>
+                    <div className="product-price" style={{ fontSize: isFestive ? '18px' : '20px', fontWeight: 800, color: '#059669', marginTop: 'auto' }}>₹{p.price_inr}</div>
+                </div>
+            </div>
+        );
+    };
+
+    return (
+        <>
+            <div className="dashboard" style={{ visibility: isPageReady ? 'visible' : 'hidden', opacity: isPageReady ? 1 : 0 }}>
+                <Navbar />
+                <div className="credit-meter-mini">
+                    <span
+                        className="credit-upgrade-link"
+                        onClick={() => router.push('/plans')}
+                        style={{ 
+                            cursor: 'pointer', 
+                            textDecoration: 'underline', 
+                            color: 'var(--accent)', 
+                            fontWeight: 700, 
+                            fontSize: '12px',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px'
+                        }}
+                    >
+                        Upgrade
+                    </span>
+                    <div className="credit-meter-track" aria-label="Credit usage">
+                        <div
+                            className="credit-meter-bar"
+                            style={{ width: `${Math.min(100, Math.max(0, (usedCredits / maxCredits) * 100))}%` }}
+                        />
+                    </div>
+                    <div className="credit-meter-info" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+                        <span className="credit-meter-text" style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                            {currentCredits} / {maxCredits} credits
+                        </span>
+                        <CountdownTimer 
+                            lastRefreshed={currentUser?.creditsLastRefreshed} 
+                            style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 500 }}
+                        />
+                    </div>
+                </div>
+
+                <div className="search-container" style={{ marginTop: '20px', marginBottom: '30px', display: 'flex', alignItems: 'center', gap: '20px', width: '100%' }}>
+                    <div className="search-box" style={{ flex: 1, minWidth: '300px' }}>
+                        <input
+                            type="text"
+                            id="searchInput"
+                            spellCheck="true"
+                            placeholder={currentCredits < 3 ? "Insufficient credits to search..." : "Search for products, brands and more..."}
+                            autoComplete="off"
+                            value={searchTerm}
+                            onChange={e => setSearchTerm(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') handleSearch(); }}
+                            onFocus={() => setIsHistoryVisible(true)}
+                            onBlur={() => setTimeout(() => setIsHistoryVisible(false), 200)}
+                            style={{ 
+                                flex: 1,
+                                opacity: currentCredits < 3 ? 0.6 : 1,
+                                cursor: currentCredits < 3 ? 'not-allowed' : 'text'
+                            }}
+                            disabled={currentCredits < 3}
+                        />
+                        <button 
+                            id="searchButton" 
+                            onClick={handleSearch}
+                            disabled={currentCredits < 3}
+                            style={{
+                                opacity: currentCredits < 3 ? 0.5 : 1,
+                                cursor: currentCredits < 3 ? 'not-allowed' : 'pointer',
+                                background: currentCredits < 3 ? '#94a3b8' : 'var(--accent)',
+                                padding: '12px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                minWidth: '48px'
+                            }}
+                        >
+                            <IconSearch size={20} color="white" />
+                        </button>
+
+                        {currentCredits < 3 && (
+                            <div style={{ 
+                                position: 'absolute', 
+                                bottom: '-24px', 
+                                left: '20px', 
+                                color: '#ef4444', 
+                                fontSize: '12px', 
+                                fontWeight: 600,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                            }}>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12" y2="16"/></svg>
+                                <span style={{ marginRight: '8px' }}>You have no sufficient credit points.</span>
+                                <CountdownTimer 
+                                    lastRefreshed={currentUser?.creditsLastRefreshed} 
+                                    prefix="Refills in: "
+                                    style={{ background: 'rgba(239, 68, 68, 0.1)', padding: '2px 6px', borderRadius: '4px' }}
+                                />
+                            </div>
+                        )}
+
+                        {isHistoryVisible && (searchHistory.length > 0 || frequentSearches.length > 0) && (
+                            <div className="search-history-dropdown">
+                                {/* PHASE 1: Empty input -> Show history */}
+                                {!searchTerm.trim() && searchHistory.length > 0 && (
+                                    <div className="search-history-section" style={{ borderBottom: frequentSearches.length > 0 ? '1px solid rgba(16, 185, 129, 0.1)' : 'none' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 20px 8px' }}>
+                                            <div style={{ fontSize: '11px', fontWeight: 800, color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Your Recent History</div>
+                                            <button 
+                                                onClick={handleClearHistory}
+                                                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '10px', cursor: 'pointer', textDecoration: 'underline' }}
+                                            >
+                                                Clear
+                                            </button>
+                                        </div>
+                                        {searchHistory.map((item, idx) => {
+                                            const queryText = typeof item === 'string' ? item : (item.search_query || item.query);
+                                            if (!queryText) return null;
+                                            return (
+                                                <div key={`hist-${idx}`} className="search-history-item" 
+                                                    style={{ display: 'flex', alignItems: 'center', padding: '10px 20px' }}
+                                                    onClick={() => {
+                                                        setSearchTerm(queryText);
+                                                        router.push(`/results?q=${encodeURIComponent(queryText)}&chargeCredits=true`);
+                                                    }}>
+                                                    <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{queryText}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                                
+                                {/* PHASE 2: Handle Trending/Suggestions */}
+                                {frequentSearches.length > 0 && (
+                                    <div className="search-suggestions-section">
+                                        {/* Show header ONLY if search term is empty */}
+                                        {!searchTerm.trim() && (
+                                            <div style={{ padding: '15px 20px 8px', fontSize: '11px', fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Trending Now</div>
+                                        )}
+                                        
+                                        <div style={{ padding: searchTerm.trim() ? '8px 0' : '0 15px 12px', display: 'flex', flexDirection: searchTerm.trim() ? 'column' : 'row', flexWrap: 'wrap', gap: '8px' }}>
+                                            {frequentSearches.map((keyword, idx) => {
+                                                const displayValue = keyword.replace(/_/g, ' ');
+                                                const actualValue = keyword;
+                                                
+                                                if (searchTerm.trim()) {
+                                                    // List style for dynamic suggestions
+                                                    return (
+                                                        <div key={`suggest-${idx}`} className="search-history-item" onClick={() => {
+                                                            setSearchTerm(actualValue);
+                                                            router.push(`/results?q=${encodeURIComponent(actualValue)}&chargeCredits=true`);
+                                                        }}>
+                                                            <span style={{ fontSize: '14px', fontWeight: 500 }}>{displayValue}</span>
+                                                        </div>
+                                                    );
+                                                } else {
+                                                    // Pill style for trending (empty input)
+                                                    return (
+                                                        <div key={`freq-${idx}`} className="frequent-search-item" onClick={() => {
+                                                            setSearchTerm(actualValue);
+                                                            router.push(`/results?q=${encodeURIComponent(actualValue)}&chargeCredits=true`);
+                                                        }} style={{ fontSize: '12px', padding: '6px 14px' }}>
+                                                            {displayValue}
+                                                        </div>
+                                                    );
+                                                }
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    <button className="diq-button shiny-shield-btn" 
+                            disabled 
+                            style={{ 
+                                width: 'auto', 
+                                padding: '14px 28px', 
+                                whiteSpace: 'nowrap', 
+                                borderRadius: '30px',
+                                opacity: 0.6,
+                                cursor: 'not-allowed',
+                                position: 'relative'
+                            }}>
+                        Find Perfect Match
+                        <span style={{
+                            position: 'absolute',
+                            top: '-10px',
+                            right: '-10px',
+                            background: 'linear-gradient(135deg, #10b981, #059669)',
+                            color: 'white',
+                            fontSize: '10px',
+                            fontWeight: 700,
+                            padding: '4px 10px',
+                            borderRadius: '12px',
+                            boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px'
+                        }}>
+                            Coming Soon
+                        </span>
+                    </button>
+                </div>
+                
+                {/* PRICE DROP ALERT - COMING SOON (Disabled for all users) */}
+                <div 
+                    className="price-drop-banner" 
+                    style={{
+                        margin: '0 auto 24px',
+                        background: 'rgba(148, 163, 184, 0.05)',
+                        border: '1px solid rgba(148, 163, 184, 0.2)',
+                        borderRadius: '20px',
+                        padding: '16px 24px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        maxWidth: '1200px',
+                        opacity: 0.7,
+                        position: 'relative'
+                    }}
+                >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <div style={{ fontSize: '24px', opacity: 0.5 }}>📉</div>
+                        <div>
+                            <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: 'var(--text-muted)' }}>Real-time Price Drop Alerts</h4>
+                            <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-faint)' }}>Get notified when prices drop on your favorite products</p>
+                        </div>
+                    </div>
+                    <div style={{ 
+                        background: 'linear-gradient(135deg, #94a3b8, #64748b)',
+                        color: 'white',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        padding: '6px 14px',
+                        borderRadius: '20px',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.5px'
+                    }}>
+                        Coming Soon
+                    </div>
+                </div>
+                
+                {/* PROMO SETTINGS */}
+                <div className="promo-banner">
+                    {slideshowImages.length > 0 ? (
+                        <div className="slideshow-container">
+                            {slideshowImages.map((img, i) => (
+                                <div
+                                    key={i}
+                                    className={`slideshow-slide ${i === slideshowIndex ? 'active' : ''}`}
+                                    style={{ backgroundImage: `url(${img.image_url})` }}
+                                >
+                                    <img src={img.image_url} alt="" className="slideshow-img" />
+                                    <div className="slideshow-overlay" />
+                                    <div className="slideshow-content">
+                                        <div className="slideshow-tag">BIG SALE LIVE</div>
+                                        <h2 className="slideshow-title">UP TO 70% OFF</h2>
+                                        <p className="slideshow-subtitle">Exclusive deals on {img.name}</p>
+                                        <button className="shiny-shield-btn" style={{ padding: '12px 24px', width: 'fit-content', marginTop: '20px', borderRadius: '30px' }}
+                                                onClick={() => router.push(`/results?q=${encodeURIComponent(img.query)}&chargeCredits=true`)}>
+                                            Shop Now →
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', height: '100%' }}>
+                            BIG SAVINGS LIVE TODAY
+                        </div>
+                    )}
+                </div>
+
+                <div className="brands-spotlight" style={{ padding: '24px', margin: '0 0 64px 0', background: 'linear-gradient(135deg, #065f46 0%, #10b981 100%)' }}>
+                    <h2 style={{ fontSize: '24px', fontWeight: '800', letterSpacing: '-1px', zIndex: 10 }}>ACCORDING TO RECENT FESTIVAL OFFERS</h2>
+                </div>
+
+                {festiveCollection.length > 0 && (
+                    <div className="dashboard-section" style={{ marginBottom: '64px' }}>
+                        <h2 className="dashboard-section-header">Festive Collection</h2>
+                        <div className="festive-grid">
+                            {festiveCollection.slice(0, 8).map((p, i) => renderCard(p, i, 'festive'))}
+                        </div>
+                    </div>
+                )}
+
+                {lootDeals.length > 0 && (
+                    <div className="dashboard-section" style={{ marginBottom: '64px' }}>
+                        <h2 className="dashboard-section-header">Look for Loot Deals</h2>
+                        <div className="scroll-focus-wrapper hide-indicator clean-highlight">
+                            <div className="horizontal-scroll-container belt-scroll">
+                                {lootDeals.map((p, i) => renderCard(p, i, 'loot'))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {grabOrGone.length > 0 && (
+                    <div className="dashboard-section hand-drawn-section" style={{ marginBottom: '64px' }}>
+                        <h2 className="dashboard-section-header">Grab or Gone</h2>
+                        <div className="scroll-focus-wrapper no-pop manual-scroll hide-indicator hand-drawn-shelf">
+                            <div className="horizontal-scroll-container manual-scroll">
+                                {grabOrGone.map((p, i) => renderCard(p, i, 'grab'))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+                
+                <div className="brands-spotlight" style={{ marginBottom: '64px', marginTop: '32px' }}>
+                    <h2 style={{ fontSize: '32px', fontWeight: '800', letterSpacing: '-1px', zIndex: 10 }}>BRANDS IN SPOTLIGHT</h2>
+                    <p style={{ zIndex: 10, color: 'rgba(255,255,255,0.7)', marginTop: '8px' }}>Up to 50% Off Top Tier Selections</p>
+                </div>
+
+                {suggestedForYou.length > 0 && (
+                    <div className="dashboard-section" style={{ marginBottom: '64px' }}>
+                        <h2 className="dashboard-section-header">Suggested For You</h2>
+                        <div className="suggested-grid">
+                            {suggestedForYou.slice(0, 8).map((p, i) => renderCard(p, i, 'suggested'))}
+                        </div>
+                    </div>
+                )}
+                
+                {bestGadgets.length > 0 && (
+                    <div className="dashboard-section" style={{ marginBottom: '64px' }}>
+                        <h2 className="dashboard-section-header">Best Gadgets & Appliances</h2>
+                        <div className="scroll-focus-wrapper">
+                            <div className="horizontal-scroll-container">
+                                {bestGadgets.map((p, i) => renderCard(p, i, 'gadgets'))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {cart.length > 0 && (
+                    <div className="dashboard-section" style={{ marginBottom: '64px' }}>
+                        <h2 className="dashboard-section-header" style={{ borderColor: '#f59e0b', color: '#b45309' }}>Your Cart - Ready to Buy Now</h2>
+                        <div className="dynamic-auto-grid">
+                            {cart.map((p, i) => renderCard(p, i, 'cart'))}
+                        </div>
+                    </div>
+                )}
+
+                {bag.length > 0 && (
+                    <div className="dashboard-section" style={{ marginBottom: '64px' }}>
+                        <h2 className="dashboard-section-header" style={{ borderColor: '#10b981', color: '#047857' }}>My Saved Bag</h2>
+                        <div className="dynamic-auto-grid">
+                            {bag.map((p, i) => renderCard(p, i, 'bag'))}
+                        </div>
+                    </div>
+                )}
+
+                {favourites.length > 0 && (
+                    <div className="dashboard-section" style={{ marginBottom: '64px' }}>
+                        <h2 className="dashboard-section-header" style={{ borderColor: '#ec4899', color: '#be185d' }}>User&apos;s Favourites</h2>
+                        <div className="fav-grid">
+                            {favourites.slice(0, 4).map((p, i) => renderCard(p, i, 'fav'))}
+                        </div>
+                    </div>
+                )}
+
+                <div className="dashboard-section" style={{ marginBottom: '64px' }}>
+                    <h2 className="dashboard-section-header" style={{ borderLeft: 'none', textAlign: 'center', color: '#064e3b' }}>Explore Categories</h2>
+                    <div className="categories-auto-grid">
+                        {categoryMeta.map((cat, i) => (
+                            <CategoryItem key={i} cat={cat} router={router} />
+                        ))}
+                    </div>
+                </div>
+                
+                <div style={{ textAlign: 'center', margin: '64px 0' }}></div>
+            </div>
+            {showDIQ && <DIQModal onClose={() => setShowDIQ(false)} />}
+            <PremiumAlert 
+                isOpen={alertConfig.isOpen}
+                title={alertConfig.title}
+                message={alertConfig.message}
+                type={alertConfig.type}
+                confirmText={alertConfig.confirmText}
+                onConfirm={alertConfig.onConfirm}
+                onClose={() => setAlertConfig({ ...alertConfig, isOpen: false })}
+            />
+        </>
+    );
+}
