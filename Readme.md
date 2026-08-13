@@ -107,3 +107,9 @@ Vercel landing page:
 
 you can run like cd frontend ; npm run dev to run all at once
 
+---
+
+**© 2026 DropIQ. All rights reserved.**
+
+This source code is proprietary to DropIQ. Unauthorized copying, reproduction, modification, distribution, or commercial use of this code, in whole or in part, is prohibited without prior written permission.
+
